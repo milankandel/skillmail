@@ -1,13 +1,45 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { firebaseConfig } from '@/lib/firebase-client'
+
+async function exchange(idToken: string): Promise<void> {
+  const res = await fetch('/api/auth/firebase', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ idToken }),
+  })
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(body.error ?? `sign-in failed (${res.status})`)
+  }
+}
 
 export function GoogleSignIn() {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Completes the redirect-fallback flow when the browser lands back here.
+  useEffect(() => {
+    void (async () => {
+      const { getApps, initializeApp } = await import('firebase/app')
+      const { getAuth, getRedirectResult } = await import('firebase/auth')
+      const app = getApps()[0] ?? initializeApp(firebaseConfig)
+      const result = await getRedirectResult(getAuth(app)).catch(() => null)
+      if (!result) return
+      setBusy(true)
+      try {
+        await exchange(await result.user.getIdToken())
+        router.push('/dashboard')
+        router.refresh()
+      } catch (e) {
+        setError((e as Error).message)
+        setBusy(false)
+      }
+    })()
+  }, [router])
 
   const signIn = async () => {
     setBusy(true)
@@ -18,18 +50,25 @@ export function GoogleSignIn() {
       const { GoogleAuthProvider, getAuth, signInWithPopup } = await import('firebase/auth')
 
       const app = getApps()[0] ?? initializeApp(firebaseConfig)
-      const credential = await signInWithPopup(getAuth(app), new GoogleAuthProvider())
+      const auth = getAuth(app)
+      const provider = new GoogleAuthProvider()
+
+      let credential
+      try {
+        credential = await signInWithPopup(auth, provider)
+      } catch (popupError) {
+        // Popup blockers (and some mobile browsers) kill the popup flow;
+        // the full-page redirect works everywhere. Resumed below on return.
+        if ((popupError as { code?: string }).code === 'auth/popup-blocked') {
+          const { signInWithRedirect } = await import('firebase/auth')
+          await signInWithRedirect(auth, provider)
+          return
+        }
+        throw popupError
+      }
       const idToken = await credential.user.getIdToken()
 
-      const res = await fetch('/api/auth/firebase', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ idToken }),
-      })
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string }
-        throw new Error(body.error ?? `sign-in failed (${res.status})`)
-      }
+      await exchange(idToken)
       router.push('/dashboard')
       router.refresh()
     } catch (e) {

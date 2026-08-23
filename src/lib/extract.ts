@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
-import type { ExtractorField } from '@/db/schema'
+import type { SkillField } from '@/db/schema'
 
 const MODEL = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-5'
 
@@ -8,6 +8,7 @@ export type ExtractionResult = {
   data: Record<string, unknown> | null
   confidence: 'high' | 'medium' | 'low'
   reasoning: string
+  replyDraft: string | null
   model: string
   inputTokens: number
   outputTokens: number
@@ -16,7 +17,7 @@ export type ExtractionResult = {
 type JsonProp = { type: string; description: string; items?: { type: string } }
 
 /** The operator's field list becomes the tool schema the model must fill. */
-function toolSchema(fields: ExtractorField[]) {
+function toolSchema(fields: SkillField[], wantsReply: boolean) {
   const properties: Record<string, JsonProp> = {}
   for (const f of fields) {
     properties[f.key] =
@@ -32,19 +33,43 @@ function toolSchema(fields: ExtractorField[]) {
     properties: {
       present: {
         type: 'boolean',
-        description: 'False when this email is not an instance of the record being extracted. Set it honestly; a wrong record is worse than no record.',
+        description:
+          'False when this email is not an instance of the record being extracted. Set it honestly; a wrong record is worse than no record.',
       },
       confidence: { type: 'string', enum: ['high', 'medium', 'low'], description: 'How certain the extraction is.' },
       reasoning: { type: 'string', description: 'One sentence on what in the email supports this.' },
       ...properties,
+      ...(wantsReply
+        ? {
+            replyDraft: {
+              type: 'string',
+              description:
+                'A reply to this email written in the persona described above. Plain text, no subject line, no signature block. Omit when present is false.',
+            },
+          }
+        : {}),
     },
     required: ['present', 'confidence', 'reasoning', ...fields.filter((f) => f.required).map((f) => f.key)],
   }
 }
 
+function systemPrompt(persona: string): string {
+  return [
+    persona.trim(),
+    '',
+    'You are reading one inbound email and turning it into a single structured record for a CRM.',
+    'Use only what the email states. Never invent an identifier, amount, or date that is not present —',
+    'leave an optional field out rather than guessing. If the email is not the kind of record described,',
+    'set present to false and stop. Your persona governs judgement and tone, never whether a fact is there.',
+  ].join('\n')
+}
+
 export async function extract(input: {
+  persona: string
   instruction: string
-  fields: ExtractorField[]
+  fields: SkillField[]
+  draftReply: boolean
+  replyInstruction?: string | null
   message: { fromAddress: string; fromName: string | null; subject: string; body: string; receivedAt: Date }
   apiKey?: string
 }): Promise<ExtractionResult> {
@@ -53,20 +78,15 @@ export async function extract(input: {
 
   const client = new Anthropic({ apiKey })
 
+  const description = input.draftReply && input.replyInstruction
+    ? `${input.instruction}\n\nWhen drafting the reply: ${input.replyInstruction}`
+    : input.instruction
+
   const response = await client.messages.create({
     model: MODEL,
-    max_tokens: 1500,
-    system:
-      'You extract one structured record from a single email for delivery into a CRM. ' +
-      'Use only what the email states. Never invent an identifier, amount, or date that is not present — ' +
-      'leave an optional field out rather than guessing. If the email is not the kind of record described, set present to false.',
-    tools: [
-      {
-        name: 'record',
-        description: input.instruction,
-        input_schema: toolSchema(input.fields),
-      },
-    ],
+    max_tokens: 2000,
+    system: systemPrompt(input.persona),
+    tools: [{ name: 'record', description, input_schema: toolSchema(input.fields, input.draftReply) }],
     tool_choice: { type: 'tool', name: 'record' },
     messages: [
       {
@@ -83,14 +103,13 @@ export async function extract(input: {
   })
 
   const block = response.content.find((c) => c.type === 'tool_use')
-  if (!block || block.type !== 'tool_use') {
-    throw new Error('model returned no structured record')
-  }
+  if (!block || block.type !== 'tool_use') throw new Error('model returned no structured record')
 
-  const { present, confidence, reasoning, ...data } = block.input as {
+  const { present, confidence, reasoning, replyDraft, ...data } = block.input as {
     present: boolean
     confidence: 'high' | 'medium' | 'low'
     reasoning: string
+    replyDraft?: string
   } & Record<string, unknown>
 
   return {
@@ -98,6 +117,7 @@ export async function extract(input: {
     data: present ? data : null,
     confidence: confidence ?? 'low',
     reasoning: reasoning ?? '',
+    replyDraft: present && replyDraft ? replyDraft : null,
     model: MODEL,
     inputTokens: response.usage.input_tokens,
     outputTokens: response.usage.output_tokens,

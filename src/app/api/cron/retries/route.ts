@@ -1,10 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { drainRetries } from '@/lib/pipeline'
+import { autoSyncMailboxes, drainRetries } from '@/lib/pipeline'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * Drains delivery backoff. Vercel Cron sends the CRON_SECRET as a bearer
+ * Drains delivery backoff and auto-syncs Gmail mailboxes. Vercel Cron sends the CRON_SECRET as a bearer
  * token; without a configured secret the route refuses rather than exposing
  * an unauthenticated worker.
  */
@@ -15,6 +15,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
 
-  const result = await drainRetries()
-  return NextResponse.json(result)
+  const [retries, sync] = [await drainRetries(), await autoSyncMailboxes()]
+  return NextResponse.json({ ...retries, ...sync })
 }

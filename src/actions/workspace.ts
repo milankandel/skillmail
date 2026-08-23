@@ -4,11 +4,13 @@ import { revalidatePath } from 'next/cache'
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/db'
-import { deliveries, destinations, extractors, mailboxes } from '@/db/schema'
+import { deliveries, destinations, skills, mailboxes } from '@/db/schema'
 import { newSecret } from '@/lib/crypto'
+import { inboundAddress, newInboundToken } from '@/lib/inbound'
 import { requireUser } from '@/lib/session'
 import { assertPublicUrl } from '@/lib/webhook'
 import { attemptDelivery, syncMailbox, type SyncSummary } from '@/lib/pipeline'
+import { draftSkill, type DraftedSkill } from '@/lib/skill-author'
 
 export type ActionState = { error?: string; ok?: string; summary?: SyncSummary }
 
@@ -48,6 +50,37 @@ export async function addDemoMailbox() {
   revalidatePath('/dashboard/mailboxes')
 }
 
+/** Mints a live address anyone can send real mail to via the inbound relay. */
+export async function addInboundMailbox() {
+  const user = await requireUser()
+  const token = newInboundToken()
+  await db
+    .insert(mailboxes)
+    .values({ userId: user.id, provider: 'inbound', address: inboundAddress(token), inboundToken: token })
+    .onConflictDoNothing()
+  revalidatePath('/dashboard/mailboxes')
+}
+
+/** Per-mailbox sync controls: query, backfill window, auto-sync. */
+export async function updateMailboxSettings(formData: FormData) {
+  const user = await requireUser()
+  const id = String(formData.get('mailboxId'))
+  const backfill = Math.min(365, Math.max(1, Number(formData.get('backfillDays')) || 30))
+  const query = String(formData.get('syncQuery') ?? 'in:inbox').trim() || 'in:inbox'
+  await db
+    .update(mailboxes)
+    .set({
+      syncQuery: query,
+      backfillDays: backfill,
+      autoSync: formData.get('autoSync') === 'on',
+      // Query or window changes invalidate the incremental cursor: the next
+      // sync must re-search, or newly-matching old mail would never appear.
+      historyId: null,
+    })
+    .where(and(eq(mailboxes.id, id), eq(mailboxes.userId, user.id)))
+  revalidatePath('/dashboard/mailboxes')
+}
+
 const fieldSchema = z.object({
   key: z.string().trim().regex(/^[a-zA-Z][a-zA-Z0-9_]*$/, 'Field keys must be alphanumeric and start with a letter'),
   type: z.enum(['string', 'number', 'boolean', 'date', 'string[]']),
@@ -55,22 +88,30 @@ const fieldSchema = z.object({
   required: z.boolean(),
 })
 
-const extractorSchema = z.object({
-  name: z.string().trim().min(2, 'Give the extractor a name'),
+const skillSchema = z.object({
+  name: z.string().trim().min(2, 'Give the skill a name'),
+  persona: z.string().trim().min(20, 'Describe who the model is acting as — a sentence or two'),
   instruction: z.string().trim().min(15, 'Describe the record in a sentence or two'),
   matchFrom: z.string().trim().optional(),
   matchSubject: z.string().trim().optional(),
+  draftReply: z.boolean(),
+  replyInstruction: z.string().trim().optional(),
+  authoredFrom: z.string().trim().optional(),
   fields: z.array(fieldSchema).min(1, 'Add at least one field'),
 })
 
-export async function saveExtractor(_prev: ActionState, formData: FormData): Promise<ActionState> {
+export async function saveSkill(_prev: ActionState, formData: FormData): Promise<ActionState> {
   try {
     const user = await requireUser()
-    const parsed = extractorSchema.safeParse({
+    const parsed = skillSchema.safeParse({
       name: formData.get('name'),
+      persona: formData.get('persona'),
       instruction: formData.get('instruction'),
       matchFrom: formData.get('matchFrom') || undefined,
       matchSubject: formData.get('matchSubject') || undefined,
+      draftReply: formData.get('draftReply') === 'on',
+      replyInstruction: formData.get('replyInstruction') || undefined,
+      authoredFrom: formData.get('authoredFrom') || undefined,
       fields: JSON.parse(String(formData.get('fields') || '[]')),
     })
     if (!parsed.success) return { error: parsed.error.issues[0].message }
@@ -81,36 +122,54 @@ export async function saveExtractor(_prev: ActionState, formData: FormData): Pro
     const id = formData.get('id')
     const values = {
       name: parsed.data.name,
+      persona: parsed.data.persona,
       instruction: parsed.data.instruction,
       matchFrom: parsed.data.matchFrom || null,
       matchSubject: parsed.data.matchSubject || null,
+      draftReply: parsed.data.draftReply,
+      replyInstruction: parsed.data.draftReply ? parsed.data.replyInstruction || null : null,
+      authoredFrom: parsed.data.authoredFrom || null,
       fields: parsed.data.fields,
     }
 
     if (id) {
-      await db.update(extractors).set(values).where(and(eq(extractors.id, String(id)), eq(extractors.userId, user.id)))
+      await db.update(skills).set(values).where(and(eq(skills.id, String(id)), eq(skills.userId, user.id)))
     } else {
-      await db.insert(extractors).values({ userId: user.id, ...values })
+      await db.insert(skills).values({ userId: user.id, ...values })
     }
-    revalidatePath('/dashboard/extractors')
-    return { ok: id ? 'Extractor updated' : 'Extractor created' }
+    revalidatePath('/dashboard/skills')
+    return { ok: id ? 'Skill updated' : 'Skill created' }
   } catch (e) {
     return fail(e)
   }
 }
 
-export async function toggleExtractor(formData: FormData) {
+export type DraftState = ActionState & { draft?: DraftedSkill }
+
+/** Turns the operator's sentence into an editable skill spec. Never saves. */
+export async function draftSkillFromPrompt(_prev: DraftState, formData: FormData): Promise<DraftState> {
+  try {
+    await requireUser()
+    const prompt = String(formData.get('prompt') ?? '').trim()
+    if (prompt.length < 15) return { error: 'Describe the job in a sentence or two so there is something to work from' }
+    return { draft: await draftSkill(prompt), ok: 'Draft ready — review every field before switching it on' }
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+export async function toggleSkill(formData: FormData) {
   const user = await requireUser()
   const id = String(formData.get('id'))
   const active = formData.get('active') === 'true'
-  await db.update(extractors).set({ active: !active }).where(and(eq(extractors.id, id), eq(extractors.userId, user.id)))
-  revalidatePath('/dashboard/extractors')
+  await db.update(skills).set({ active: !active }).where(and(eq(skills.id, id), eq(skills.userId, user.id)))
+  revalidatePath('/dashboard/skills')
 }
 
-export async function deleteExtractor(formData: FormData) {
+export async function deleteSkill(formData: FormData) {
   const user = await requireUser()
-  await db.delete(extractors).where(and(eq(extractors.id, String(formData.get('id'))), eq(extractors.userId, user.id)))
-  revalidatePath('/dashboard/extractors')
+  await db.delete(skills).where(and(eq(skills.id, String(formData.get('id'))), eq(skills.userId, user.id)))
+  revalidatePath('/dashboard/skills')
 }
 
 export async function saveDestination(_prev: ActionState, formData: FormData): Promise<ActionState> {

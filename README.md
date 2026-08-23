@@ -21,8 +21,17 @@ Gmail (read-only)  →  message store  →  Claude tool-call extraction  →  si
                                        present / confidence          HMAC-SHA256 + retry
 ```
 
-1. **Connect a mailbox.** Gmail OAuth, `gmail.readonly` scope only. Refresh tokens are sealed
-   with AES-256-GCM before they reach Postgres, so a database dump is inert without `APP_SECRET`.
+1. **Connect a mailbox.** Three ways in:
+   - **Gmail OAuth**, `gmail.readonly` scope only. Refresh tokens are sealed with AES-256-GCM
+     before they reach Postgres, so a database dump is inert without `APP_SECRET`. First sync
+     backfills a configurable window (default 30 days, paginated); every later sync replays
+     Gmail's History API from a stored cursor — incremental, cheap, and exactly-once. A cursor
+     that ages out of Gmail's ~7-day history window falls back to a bounded search automatically.
+   - **A live inbound address** minted per user (`abc123@inbound.mailhook.dev`). Point any relay
+     — Postmark, Mailgun, SendGrid inbound parse, a Cloudflare Email Worker — at
+     `/api/inbound/{token}` and real mail anyone sends is parsed (native relay JSON, form posts,
+     or raw RFC 822), stored, and run through every active skill immediately. No polling.
+   - **A demo inbox** seeded on signup, so the pipeline is observable before granting anything.
 2. **Define an extractor.** A name, a plain-English instruction, and a field list. That field
    list is compiled into the tool schema Claude must fill *and* the JSON contract your endpoint
    receives — they cannot drift apart.
@@ -39,6 +48,8 @@ Gmail (read-only)  →  message store  →  Claude tool-call extraction  →  si
 | Signature covers timestamp + body | Five-minute replay window, `timingSafeEqual` comparison. Verification is ten lines on the receiver. |
 | Raw `fetch` instead of `googleapis` | Four endpoints are used; the SDK adds megabytes of discovery documents to a serverless bundle. |
 | Demo mailbox on signup | The whole pipeline is observable before anyone grants access to a real inbox. |
+| History API over re-search | After the first backfill, Gmail syncs replay the history feed from a cursor — new mail only, no re-listing of the mailbox. Query/window edits reset the cursor deliberately. |
+| Inbound token = credential | The relay endpoint's path token is the only secret; unknown tokens return a flat 404, duplicate Message-Ids are absorbed without re-extracting or re-billing. |
 
 ## Stack
 

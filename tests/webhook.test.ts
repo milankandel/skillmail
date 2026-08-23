@@ -47,7 +47,7 @@ test('destination guard rejects private and non-https targets', async () => {
     'not-a-url',
   ]
   for (const url of bad) {
-    await assert.rejects(assertPublicUrl(url), undefined, `expected ${url} to be rejected`)
+    await assert.rejects(assertPublicUrl(url), `expected ${url} to be rejected`)
   }
 })
 

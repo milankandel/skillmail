@@ -110,13 +110,75 @@ export async function profileAddress(accessToken: string): Promise<string> {
   return json.emailAddress
 }
 
-export async function listMessageIds(accessToken: string, opts: { query?: string; max?: number } = {}): Promise<string[]> {
-  const params = new URLSearchParams({ maxResults: String(opts.max ?? 25) })
-  if (opts.query) params.set('q', opts.query)
-  const res = await fetch(`${API}/messages?${params}`, { headers: { authorization: `Bearer ${accessToken}` } })
-  if (!res.ok) throw new Error(`gmail list failed (${res.status})`)
-  const json = (await res.json()) as { messages?: { id: string }[] }
-  return (json.messages ?? []).map((m) => m.id)
+/**
+ * Walks every page of a search rather than the first, capping at `max` so one
+ * enormous mailbox cannot stall a sync indefinitely.
+ */
+export async function listMessageIds(
+  accessToken: string,
+  opts: { query?: string; max?: number } = {},
+): Promise<{ ids: string[]; truncated: boolean }> {
+  const max = opts.max ?? 250
+  const ids: string[] = []
+  let pageToken: string | undefined
+
+  do {
+    const params = new URLSearchParams({ maxResults: String(Math.min(500, max - ids.length)) })
+    if (opts.query) params.set('q', opts.query)
+    if (pageToken) params.set('pageToken', pageToken)
+
+    const res = await fetch(`${API}/messages?${params}`, { headers: { authorization: `Bearer ${accessToken}` } })
+    if (!res.ok) throw new Error(`gmail list failed (${res.status})`)
+    const json = (await res.json()) as { messages?: { id: string }[]; nextPageToken?: string }
+
+    ids.push(...(json.messages ?? []).map((m) => m.id))
+    pageToken = json.nextPageToken
+  } while (pageToken && ids.length < max)
+
+  return { ids, truncated: Boolean(pageToken) }
+}
+
+/** The mailbox's current history cursor, used to start incremental syncing. */
+export async function currentHistoryId(accessToken: string): Promise<string> {
+  const res = await fetch(`${API}/profile`, { headers: { authorization: `Bearer ${accessToken}` } })
+  if (!res.ok) throw new Error(`gmail profile failed (${res.status})`)
+  const json = (await res.json()) as { historyId: string }
+  return json.historyId
+}
+
+export type HistoryResult = { ids: string[]; historyId: string | null; expired: boolean }
+
+/**
+ * Incremental sync. Gmail keeps roughly a week of history, so a cursor older
+ * than that returns 404 — the caller then falls back to a bounded search.
+ */
+export async function listHistorySince(accessToken: string, startHistoryId: string): Promise<HistoryResult> {
+  const ids = new Set<string>()
+  let pageToken: string | undefined
+  let latest: string | null = null
+
+  do {
+    const params = new URLSearchParams({ startHistoryId, historyTypes: 'messageAdded' })
+    if (pageToken) params.set('pageToken', pageToken)
+
+    const res = await fetch(`${API}/history?${params}`, { headers: { authorization: `Bearer ${accessToken}` } })
+    if (res.status === 404) return { ids: [], historyId: null, expired: true }
+    if (!res.ok) throw new Error(`gmail history failed (${res.status})`)
+
+    const json = (await res.json()) as {
+      history?: { messagesAdded?: { message: { id: string } }[] }[]
+      historyId?: string
+      nextPageToken?: string
+    }
+
+    for (const entry of json.history ?? []) {
+      for (const added of entry.messagesAdded ?? []) ids.add(added.message.id)
+    }
+    latest = json.historyId ?? latest
+    pageToken = json.nextPageToken
+  } while (pageToken)
+
+  return { ids: [...ids], historyId: latest, expired: false }
 }
 
 type GmailPart = {

@@ -7,7 +7,7 @@ import { logOut } from '@/actions/auth'
 const NAV = [
   { href: '/dashboard', label: 'Overview', icon: Webhook },
   { href: '/dashboard/mailboxes', label: 'Mailboxes', icon: Inbox },
-  { href: '/dashboard/extractors', label: 'Extractors', icon: ListChecks },
+  { href: '/dashboard/skills', label: 'Skills', icon: ListChecks },
   { href: '/dashboard/destinations', label: 'Destinations', icon: Send },
   { href: '/dashboard/deliveries', label: 'Deliveries', icon: Send },
 ]

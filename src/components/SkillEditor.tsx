@@ -2,72 +2,119 @@
 
 import { useActionState, useState } from 'react'
 import { Plus, X } from 'lucide-react'
-import { saveExtractor, type ActionState } from '@/actions/workspace'
-import type { ExtractorField } from '@/db/schema'
+import { saveSkill, type ActionState } from '@/actions/workspace'
+import type { SkillField } from '@/db/schema'
 
-const TYPES: ExtractorField['type'][] = ['string', 'number', 'boolean', 'date', 'string[]']
+const TYPES: SkillField['type'][] = ['string', 'number', 'boolean', 'date', 'string[]']
+const BLANK: SkillField = { key: '', type: 'string', description: '', required: false }
 
-const BLANK: ExtractorField = { key: '', type: 'string', description: '', required: false }
+export type SkillDraft = {
+  id?: string
+  name: string
+  persona: string
+  instruction: string
+  matchFrom: string | null
+  matchSubject: string | null
+  draftReply: boolean
+  replyInstruction: string | null
+  authoredFrom: string | null
+  fields: SkillField[]
+}
 
 type Props = {
-  extractor?: {
-    id: string
-    name: string
-    instruction: string
-    matchFrom: string | null
-    matchSubject: string | null
-    fields: ExtractorField[]
-  }
+  skill?: SkillDraft
+  /** Shown above the form when the spec came out of the composer. */
+  notes?: string
   onDone?: () => void
 }
 
-export function ExtractorEditor({ extractor, onDone }: Props) {
-  const [fields, setFields] = useState<ExtractorField[]>(extractor?.fields ?? [{ ...BLANK }])
+export function SkillEditor({ skill, notes, onDone }: Props) {
+  const [fields, setFields] = useState<SkillField[]>(skill?.fields?.length ? skill.fields : [{ ...BLANK }])
+  const [wantsReply, setWantsReply] = useState(skill?.draftReply ?? false)
   const [state, submit, pending] = useActionState<ActionState, FormData>(async (prev, data) => {
     data.set('fields', JSON.stringify(fields))
-    const result = await saveExtractor(prev, data)
+    const result = await saveSkill(prev, data)
     if (result.ok) onDone?.()
     return result
   }, {})
 
-  const patch = (i: number, next: Partial<ExtractorField>) =>
+  const patch = (i: number, next: Partial<SkillField>) =>
     setFields((f) => f.map((row, idx) => (idx === i ? { ...row, ...next } : row)))
 
   return (
     <form action={submit} className="card space-y-5 p-5">
-      {extractor && <input type="hidden" name="id" value={extractor.id} />}
+      {skill?.id && <input type="hidden" name="id" value={skill.id} />}
+      {skill?.authoredFrom && <input type="hidden" name="authoredFrom" value={skill.authoredFrom} />}
+
+      {notes && (
+        <p className="rounded-md border border-teal-900/50 bg-teal-950/25 px-3 py-2 text-sm text-teal-200">{notes}</p>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block">
           <span className="mb-1.5 block text-xs text-gray-400">Name</span>
-          <input name="name" required defaultValue={extractor?.name} className="input-base" placeholder="Inbound quote request" />
+          <input name="name" required defaultValue={skill?.name} className="input-base" placeholder="Inbound quote request" />
         </label>
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
             <span className="mb-1.5 block text-xs text-gray-400">Only if sender contains</span>
-            <input name="matchFrom" defaultValue={extractor?.matchFrom ?? ''} className="input-base" placeholder="optional" />
+            <input name="matchFrom" defaultValue={skill?.matchFrom ?? ''} className="input-base" placeholder="optional" />
           </label>
           <label className="block">
             <span className="mb-1.5 block text-xs text-gray-400">Only if subject contains</span>
-            <input name="matchSubject" defaultValue={extractor?.matchSubject ?? ''} className="input-base" placeholder="optional" />
+            <input name="matchSubject" defaultValue={skill?.matchSubject ?? ''} className="input-base" placeholder="optional" />
           </label>
         </div>
       </div>
 
       <label className="block">
-        <span className="mb-1.5 block text-xs text-gray-400">What record is this?</span>
+        <span className="mb-1.5 block text-xs text-gray-400">Persona — who is reading this mail?</span>
+        <textarea
+          name="persona"
+          required
+          rows={3}
+          defaultValue={skill?.persona}
+          className="input-base"
+          placeholder="You are a dispatch coordinator at a drayage carrier. You read inbound mail the way someone who has to quote it does…"
+        />
+        <span className="mt-1 block text-xs text-gray-600">
+          Sets the judgement the model applies, not just its tone. Name the role and the business.
+        </span>
+      </label>
+
+      <label className="block">
+        <span className="mb-1.5 block text-xs text-gray-400">What counts — and what does not</span>
         <textarea
           name="instruction"
           required
           rows={3}
-          defaultValue={extractor?.instruction}
+          defaultValue={skill?.instruction}
           className="input-base"
-          placeholder="Extract a freight quote request: who is asking, what they need moved, where from and to, and what they are willing to pay."
+          placeholder="Extract a freight quote request… A newsletter, an invoice, or an internal thread is not a quote request — skip those."
         />
         <span className="mt-1 block text-xs text-gray-600">
-          Written straight into the model’s tool description. Be specific about what does and does not count.
+          The second half earns its keep. Naming the near misses is what stops junk records.
         </span>
       </label>
+
+      <div>
+        <label className="flex items-center gap-2 text-sm text-gray-300">
+          <input type="checkbox" name="draftReply" checked={wantsReply} onChange={(e) => setWantsReply(e.target.checked)} />
+          Also draft a reply in this persona’s voice
+        </label>
+        {wantsReply && (
+          <textarea
+            name="replyInstruction"
+            rows={2}
+            defaultValue={skill?.replyInstruction ?? ''}
+            className="input-base mt-2"
+            placeholder="Acknowledge the request, confirm the lane back to them, and say a quote follows within the business day. Never commit to a price."
+          />
+        )}
+        <p className="mt-1 text-xs text-gray-600">
+          The draft rides along in the webhook payload. Nothing is ever sent from your mailbox.
+        </p>
+      </div>
 
       <div>
         <div className="mb-2 flex items-center justify-between">
@@ -90,7 +137,7 @@ export function ExtractorEditor({ extractor, onDone }: Props) {
                 className="input-base font-mono text-[13px]"
                 placeholder="contactEmail"
               />
-              <select value={f.type} onChange={(e) => patch(i, { type: e.target.value as ExtractorField['type'] })} className="input-base">
+              <select value={f.type} onChange={(e) => patch(i, { type: e.target.value as SkillField['type'] })} className="input-base">
                 {TYPES.map((t) => (
                   <option key={t} value={t}>
                     {t}
@@ -127,7 +174,7 @@ export function ExtractorEditor({ extractor, onDone }: Props) {
 
       <div className="flex gap-3">
         <button type="submit" disabled={pending} className="btn btn-primary">
-          {pending ? 'Saving…' : extractor ? 'Save changes' : 'Create extractor'}
+          {pending ? 'Saving…' : skill?.id ? 'Save changes' : 'Create skill'}
         </button>
         {onDone && (
           <button type="button" onClick={onDone} className="btn btn-ghost">

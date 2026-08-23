@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
 import { db } from '@/db'
-import { destinations, extractors, mailboxes, users } from '@/db/schema'
+import { destinations, skills, mailboxes, users } from '@/db/schema'
 import { newSecret } from '@/lib/crypto'
 import { endSession, startSession } from '@/lib/session'
 
@@ -18,17 +18,24 @@ const credentials = z.object({
 })
 
 /**
- * A fresh account gets a demo mailbox, one worked example of an extractor, and
+ * A fresh account gets a demo mailbox, one worked example of an skill, and
  * a request-bin destination, so the first sync produces something to look at
  * without the operator configuring anything first.
  */
 async function seedWorkspace(userId: string) {
   await db.insert(mailboxes).values({ userId, provider: 'demo', address: 'demo-inbox@mailhook.dev' })
-  await db.insert(extractors).values({
+  await db.insert(skills).values({
     userId,
     name: 'Inbound quote request',
+    persona:
+      'You are a dispatch coordinator at a drayage carrier. You read inbound mail the way someone who has to quote it does: ' +
+      'you care about lane, equipment, timing, and whether the sender named a number. You are sceptical of anything that ' +
+      'reads like marketing.',
     instruction:
-      'Extract a freight quote request: who is asking, what they need moved, where from and to, and what they are willing to pay.',
+      'Extract a freight quote request: who is asking, what they need moved, where from and to, and what they are willing ' +
+      'to pay. A newsletter, an invoice, a status update, or an internal thread is not a quote request — skip those.',
+    draftReply: false,
+    authoredFrom: 'Pull freight quote requests out of my inbox and tell me what they want to pay.',
     fields: [
       { key: 'company', type: 'string', description: 'The requesting company name.', required: true },
       { key: 'contactName', type: 'string', description: 'Full name of the person asking.', required: false },

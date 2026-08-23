@@ -8,7 +8,7 @@ x-mailhook-idempotency-key: 4b1f…
 
 {
   "type": "record.extracted",
-  "extractor": "Inbound quote request",
+  "skill": "Inbound quote request",
   "record": {
     "company": "Northwind Freight",
     "contactName": "Dana Whitfield",
@@ -49,7 +49,7 @@ const STEPS = [
 
 const GUARANTEES = [
   { icon: ShieldCheck, title: 'Signed, verifiable payloads', body: 'HMAC-SHA256 over timestamp and body, with a five-minute replay window. Verification is ten lines on your side.' },
-  { icon: RefreshCcw, title: 'Idempotent end to end', body: 'Messages key on provider id, extractions on message plus extractor, deliveries carry an idempotency key. Re-running a sync duplicates nothing.' },
+  { icon: RefreshCcw, title: 'Idempotent end to end', body: 'Messages key on provider id, extractions on message plus skill, deliveries carry an idempotency key. Re-running a sync duplicates nothing.' },
   { icon: KeyRound, title: 'Refuses to guess', body: 'The model reports whether the record was actually present and how confident it is. A newsletter comes back skipped, not invented.' },
 ]
 

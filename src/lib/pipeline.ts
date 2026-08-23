@@ -1,10 +1,11 @@
 import { and, asc, eq, inArray, isNotNull, lte } from 'drizzle-orm'
 import { db } from '@/db'
-import { deliveries, destinations, extractions, extractors, mailboxes, messages } from '@/db/schema'
+import { deliveries, destinations, extractions, mailboxes, messages, skills } from '@/db/schema'
 import { open, seal } from './crypto'
 import { DEMO_MESSAGES } from './demo-mailbox'
 import { extract } from './extract'
 import * as gmail from './gmail'
+import type { ParsedMessage } from './gmail'
 import { MAX_ATTEMPTS, deliver, nextAttemptAt } from './webhook'
 
 export type SyncSummary = {
@@ -14,6 +15,8 @@ export type SyncSummary = {
   skipped: number
   delivered: number
   failed: number
+  /** True when the mailbox held more than one sync could cover. */
+  truncated: boolean
 }
 
 /** Refreshes the access token in place when it is within a minute of expiry. */
@@ -39,26 +42,76 @@ async function usableAccessToken(mailbox: typeof mailboxes.$inferSelect): Promis
   }
 }
 
-async function fetchNew(mailbox: typeof mailboxes.$inferSelect) {
-  if (mailbox.provider === 'demo') return DEMO_MESSAGES
+/**
+ * Chooses the cheapest correct strategy: replay Gmail's history feed when a
+ * cursor exists, otherwise a bounded search over the backfill window. Returns
+ * the messages plus the cursor to persist.
+ */
+async function fetchNew(
+  mailbox: typeof mailboxes.$inferSelect,
+): Promise<{ messages: ParsedMessage[]; historyId: string | null; truncated: boolean }> {
+  if (mailbox.provider !== 'gmail') return { messages: [], historyId: null, truncated: false }
 
   const accessToken = await usableAccessToken(mailbox)
-  const ids = await gmail.listMessageIds(accessToken, { query: 'in:inbox newer_than:14d', max: 25 })
-  if (!ids.length) return []
 
-  const known = await db
-    .select({ providerId: messages.providerId })
-    .from(messages)
-    .where(and(eq(messages.mailboxId, mailbox.id), inArray(messages.providerId, ids)))
-  const seen = new Set(known.map((k) => k.providerId))
+  let candidateIds: string[] = []
+  let truncated = false
+  let cursor: string | null = null
 
-  const wanted = ids.filter((id) => !seen.has(id))
-  return Promise.all(wanted.map((id) => gmail.getMessage(accessToken, id)))
+  if (mailbox.historyId) {
+    const history = await gmail.listHistorySince(accessToken, mailbox.historyId)
+    if (history.expired) {
+      // Cursor aged out of Gmail's ~7-day history window; fall back to search.
+      const search = await gmail.listMessageIds(accessToken, { query: `${mailbox.syncQuery} newer_than:7d`, max: 250 })
+      candidateIds = search.ids
+      truncated = search.truncated
+      cursor = await gmail.currentHistoryId(accessToken)
+    } else {
+      candidateIds = history.ids
+      cursor = history.historyId ?? mailbox.historyId
+    }
+  } else {
+    const search = await gmail.listMessageIds(accessToken, {
+      query: `${mailbox.syncQuery} newer_than:${mailbox.backfillDays}d`,
+      max: 500,
+    })
+    candidateIds = search.ids
+    truncated = search.truncated
+    cursor = await gmail.currentHistoryId(accessToken)
+  }
+
+  if (!candidateIds.length) return { messages: [], historyId: cursor, truncated }
+
+  // Gmail ids are stable, so anything already stored is skipped before the
+  // expensive per-message fetch rather than after it.
+  const known = new Set<string>()
+  for (let i = 0; i < candidateIds.length; i += 200) {
+    const slice = candidateIds.slice(i, i + 200)
+    const rows = await db
+      .select({ providerId: messages.providerId })
+      .from(messages)
+      .where(and(eq(messages.mailboxId, mailbox.id), inArray(messages.providerId, slice)))
+    for (const r of rows) known.add(r.providerId)
+  }
+
+  const wanted = candidateIds.filter((id) => !known.has(id))
+  const fetched: ParsedMessage[] = []
+
+  // Bounded concurrency: Gmail rate-limits hard, and a 500-wide Promise.all
+  // reliably trips it.
+  for (let i = 0; i < wanted.length; i += 8) {
+    const batch = await Promise.allSettled(wanted.slice(i, i + 8).map((id) => gmail.getMessage(accessToken, id)))
+    for (const result of batch) {
+      if (result.status === 'fulfilled') fetched.push(result.value)
+    }
+  }
+
+  return { messages: fetched, historyId: cursor, truncated }
 }
 
-function matches(extractor: typeof extractors.$inferSelect, message: { fromAddress: string; subject: string }) {
-  if (extractor.matchFrom && !message.fromAddress.toLowerCase().includes(extractor.matchFrom.toLowerCase())) return false
-  if (extractor.matchSubject && !message.subject.toLowerCase().includes(extractor.matchSubject.toLowerCase())) return false
+function matches(skill: typeof skills.$inferSelect, message: { fromAddress: string; subject: string }) {
+  if (skill.matchFrom && !message.fromAddress.toLowerCase().includes(skill.matchFrom.toLowerCase())) return false
+  if (skill.matchSubject && !message.subject.toLowerCase().includes(skill.matchSubject.toLowerCase())) return false
   return true
 }
 
@@ -68,7 +121,7 @@ function matches(extractor: typeof extractors.$inferSelect, message: { fromAddre
  * nothing.
  */
 export async function syncMailbox(userId: string, mailboxId: string): Promise<SyncSummary> {
-  const summary: SyncSummary = { fetched: 0, stored: 0, extracted: 0, skipped: 0, delivered: 0, failed: 0 }
+  const summary: SyncSummary = { fetched: 0, stored: 0, extracted: 0, skipped: 0, delivered: 0, failed: 0, truncated: false }
 
   const [mailbox] = await db
     .select()
@@ -77,8 +130,25 @@ export async function syncMailbox(userId: string, mailboxId: string): Promise<Sy
     .limit(1)
   if (!mailbox) throw new Error('mailbox not found')
 
-  const incoming = await fetchNew(mailbox)
+  let incoming: ParsedMessage[]
+  let cursor: string | null = null
+  let truncated = false
+
+  if (mailbox.provider === 'demo') {
+    incoming = DEMO_MESSAGES
+  } else if (mailbox.provider === 'inbound') {
+    // Inbound mail is pushed by the relay, never pulled. A sync re-runs
+    // skills over anything already received.
+    incoming = []
+  } else {
+    const result = await fetchNew(mailbox)
+    incoming = result.messages
+    cursor = result.historyId
+    truncated = result.truncated
+  }
+
   summary.fetched = incoming.length
+  summary.truncated = truncated
 
   const stored = incoming.length
     ? await db
@@ -101,39 +171,70 @@ export async function syncMailbox(userId: string, mailboxId: string): Promise<Sy
     : []
   summary.stored = stored.length
 
-  await db.update(mailboxes).set({ lastSyncedAt: new Date() }).where(eq(mailboxes.id, mailbox.id))
+  await db
+    .update(mailboxes)
+    .set({ lastSyncedAt: new Date(), lastSyncError: null, ...(cursor ? { historyId: cursor } : {}) })
+    .where(eq(mailboxes.id, mailbox.id))
+
+  Object.assign(summary, await runSkills(userId, stored, summary))
+  return summary
+}
+
+/**
+ * Applies every active skill to a batch of stored messages and ships the
+ * results. Shared by the pull path (sync) and the push path (inbound relay),
+ * so both behave identically.
+ */
+export async function runSkills(
+  userId: string,
+  batch: (typeof messages.$inferSelect)[],
+  into?: SyncSummary,
+): Promise<SyncSummary> {
+  const summary: SyncSummary = into ?? {
+    fetched: batch.length,
+    stored: batch.length,
+    extracted: 0,
+    skipped: 0,
+    delivered: 0,
+    failed: 0,
+    truncated: false,
+  }
 
   const [rules, targets] = await Promise.all([
-    db.select().from(extractors).where(and(eq(extractors.userId, userId), eq(extractors.active, true))),
+    db.select().from(skills).where(and(eq(skills.userId, userId), eq(skills.active, true))),
     db.select().from(destinations).where(and(eq(destinations.userId, userId), eq(destinations.active, true))),
   ])
   if (!rules.length) return summary
 
-  for (const message of stored) {
+  for (const message of batch) {
     for (const rule of rules) {
       if (!matches(rule, message)) continue
 
       let row: typeof extractions.$inferInsert
       try {
         const result = await extract({
+          persona: rule.persona,
           instruction: rule.instruction,
           fields: rule.fields,
+          draftReply: rule.draftReply,
+          replyInstruction: rule.replyInstruction,
           message,
         })
         row = {
           userId,
           messageId: message.id,
-          extractorId: rule.id,
+          skillId: rule.id,
           status: result.status,
           data: result.data,
           confidence: result.confidence,
           reasoning: result.reasoning,
+          replyDraft: result.replyDraft,
           model: result.model,
           inputTokens: result.inputTokens,
           outputTokens: result.outputTokens,
         }
       } catch (e) {
-        row = { userId, messageId: message.id, extractorId: rule.id, status: 'failed', error: (e as Error).message }
+        row = { userId, messageId: message.id, skillId: rule.id, status: 'failed', error: (e as Error).message }
       }
 
       const [saved] = await db.insert(extractions).values(row).onConflictDoNothing().returning()
@@ -157,16 +258,17 @@ export async function syncMailbox(userId: string, mailboxId: string): Promise<Sy
 }
 
 export function payloadFor(input: {
-  extractor: typeof extractors.$inferSelect
+  skill: typeof skills.$inferSelect
   message: typeof messages.$inferSelect
   extraction: typeof extractions.$inferSelect
 }) {
   return {
     type: 'record.extracted',
-    extractor: input.extractor.name,
+    skill: input.skill.name,
     record: input.extraction.data,
     confidence: input.extraction.confidence,
     reasoning: input.extraction.reasoning,
+    ...(input.extraction.replyDraft ? { replyDraft: input.extraction.replyDraft } : {}),
     source: {
       messageId: input.message.id,
       from: input.message.fromAddress,
@@ -190,14 +292,14 @@ export async function attemptDelivery(deliveryId: string): Promise<boolean> {
   if (!row) throw new Error('delivery not found')
 
   const [message] = await db.select().from(messages).where(eq(messages.id, row.extraction.messageId)).limit(1)
-  const [extractor] = await db.select().from(extractors).where(eq(extractors.id, row.extraction.extractorId)).limit(1)
+  const [skill] = await db.select().from(skills).where(eq(skills.id, row.extraction.skillId)).limit(1)
 
   const attempt = await deliver({
     url: row.destination.url,
     secret: row.destination.secret,
     headers: row.destination.headers,
     idempotencyKey: row.delivery.id,
-    payload: payloadFor({ extractor, message, extraction: row.extraction }),
+    payload: payloadFor({ skill, message, extraction: row.extraction }),
   })
 
   const attempts = row.delivery.attempts + 1
@@ -232,6 +334,32 @@ export async function drainRetries(limit = 25): Promise<{ retried: number; deliv
     if (await attemptDelivery(d.id)) delivered++
   }
   return { retried: due.length, delivered }
+}
+
+/**
+ * Cron entry: syncs every gmail mailbox that opted into auto-sync. Errors are
+ * recorded on the mailbox rather than thrown, so one broken connection cannot
+ * stall the rest of the fleet.
+ */
+export async function autoSyncMailboxes(limit = 10): Promise<{ synced: number; failed: number }> {
+  const due = await db
+    .select({ id: mailboxes.id, userId: mailboxes.userId })
+    .from(mailboxes)
+    .where(and(eq(mailboxes.provider, 'gmail'), eq(mailboxes.autoSync, true), eq(mailboxes.status, 'active')))
+    .limit(limit)
+
+  let synced = 0
+  let failed = 0
+  for (const box of due) {
+    try {
+      await syncMailbox(box.userId, box.id)
+      synced++
+    } catch (e) {
+      failed++
+      await db.update(mailboxes).set({ lastSyncError: (e as Error).message }).where(eq(mailboxes.id, box.id))
+    }
+  }
+  return { synced, failed }
 }
 
 export { MAX_ATTEMPTS }

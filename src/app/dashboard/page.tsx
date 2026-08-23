@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { desc, eq } from 'drizzle-orm'
 import { db } from '@/db'
-import { deliveries, destinations, extractions, extractors, mailboxes, messages } from '@/db/schema'
+import { deliveries, destinations, extractions, skills, mailboxes, messages } from '@/db/schema'
 import { requireUser } from '@/lib/session'
 
 function Stat({ label, value, hint }: { label: string; value: number | string; hint?: string }) {
@@ -19,13 +19,13 @@ export default async function Overview() {
 
   const [boxes, rules, targets, recent] = await Promise.all([
     db.select().from(mailboxes).where(eq(mailboxes.userId, user.id)),
-    db.select().from(extractors).where(eq(extractors.userId, user.id)),
+    db.select().from(skills).where(eq(skills.userId, user.id)),
     db.select().from(destinations).where(eq(destinations.userId, user.id)),
     db
-      .select({ extraction: extractions, message: messages, extractor: extractors })
+      .select({ extraction: extractions, message: messages, skill: skills })
       .from(extractions)
       .innerJoin(messages, eq(extractions.messageId, messages.id))
-      .innerJoin(extractors, eq(extractions.extractorId, extractors.id))
+      .innerJoin(skills, eq(extractions.skillId, skills.id))
       .where(eq(extractions.userId, user.id))
       .orderBy(desc(extractions.createdAt))
       .limit(8),
@@ -47,7 +47,7 @@ export default async function Overview() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Mailboxes" value={boxes.length} hint={boxes.map((b) => b.address).join(', ') || 'none connected'} />
-        <Stat label="Extractors" value={rules.filter((r) => r.active).length} hint={`${rules.length} total`} />
+        <Stat label="Skills" value={rules.filter((r) => r.active).length} hint={`${rules.length} total`} />
         <Stat label="Destinations" value={activeTargets} hint={`${targets.length} configured`} />
         <Stat label="Deliveries" value={sent.length} hint="all time" />
       </div>
@@ -69,7 +69,7 @@ export default async function Overview() {
           </div>
         ) : (
           <ul className="space-y-2">
-            {recent.map(({ extraction, message, extractor }) => (
+            {recent.map(({ extraction, message, skill }) => (
               <li key={extraction.id} className="card p-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <span
@@ -85,7 +85,7 @@ export default async function Overview() {
                   </span>
                   <span className="text-sm text-white">{message.subject}</span>
                   <span className="text-xs text-gray-500">from {message.fromAddress}</span>
-                  <span className="ml-auto text-xs text-gray-600">{extractor.name}</span>
+                  <span className="ml-auto text-xs text-gray-600">{skill.name}</span>
                 </div>
                 {extraction.reasoning && <p className="mt-1.5 text-xs text-gray-500">{extraction.reasoning}</p>}
                 {extraction.data && (

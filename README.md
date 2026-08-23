@@ -5,7 +5,7 @@ Turn inbound email into structured CRM records.
 Connect a mailbox, describe the record you want in plain English, and SkillMail reads each
 message with Claude, extracts the record, and POSTs it to your CRM as a signed webhook.
 
-**Live demo:** _not deployed yet_ — see [Deploying](#deploying).
+**Live demo:** [skillmail.vercel.app](https://skillmail.vercel.app) — sign up, run a sync on the sample inbox, or mint an inbound address and POST it real mail.
 
 ## Why it exists
 

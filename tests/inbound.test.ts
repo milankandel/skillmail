@@ -5,7 +5,7 @@ import { parseRawMime, parseRelayPayload, newInboundToken, inboundAddress } from
 test('raw MIME: plain text with folded headers', () => {
   const raw = [
     'From: "Dana Whitfield" <dana@northwindfreight.com>',
-    'To: abc123@inbound.mailhook.dev',
+    'To: abc123@inbound.skillmail.dev',
     'Subject: RFQ — 3 loads,',
     ' Savannah to Atlanta',
     'Message-ID: <msg-1@northwind>',

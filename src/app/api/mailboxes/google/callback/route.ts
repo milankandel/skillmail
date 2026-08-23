@@ -18,8 +18,8 @@ export async function GET(request: NextRequest) {
   if (error) return back(`error=${encodeURIComponent(`Google returned: ${error}`)}`)
 
   const jar = await cookies()
-  const expected = jar.get('mh_oauth_state')?.value
-  jar.delete('mh_oauth_state')
+  const expected = jar.get('sm_oauth_state')?.value
+  jar.delete('sm_oauth_state')
   if (!expected || url.searchParams.get('state') !== expected) {
     return back('error=Authorization+state+did+not+match.+Try+again.')
   }

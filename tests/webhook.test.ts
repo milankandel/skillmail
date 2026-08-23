@@ -52,6 +52,6 @@ test('destination guard rejects private and non-https targets', async () => {
 })
 
 test('destination guard accepts a public https endpoint', async () => {
-  const url = await assertPublicUrl('https://example.com/hooks/mailhook')
+  const url = await assertPublicUrl('https://example.com/hooks/skillmail')
   assert.equal(url.hostname, 'example.com')
 })

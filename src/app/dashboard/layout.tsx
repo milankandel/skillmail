@@ -22,7 +22,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <div className="mx-auto flex max-w-6xl items-center gap-6 px-6 py-3">
           <Link href="/dashboard" className="flex items-center gap-2 text-sm font-semibold text-white">
             <Webhook className="size-4 text-brand" />
-            MailHook
+            SkillMail
           </Link>
           <nav className="flex flex-1 flex-wrap gap-1">
             {NAV.map((n) => (

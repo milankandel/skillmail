@@ -23,7 +23,7 @@ const credentials = z.object({
  * without the operator configuring anything first.
  */
 async function seedWorkspace(userId: string) {
-  await db.insert(mailboxes).values({ userId, provider: 'demo', address: 'demo-inbox@mailhook.dev' })
+  await db.insert(mailboxes).values({ userId, provider: 'demo', address: 'demo-inbox@skillmail.dev' })
   await db.insert(skills).values({
     userId,
     name: 'Inbound quote request',

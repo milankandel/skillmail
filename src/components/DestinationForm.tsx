@@ -9,7 +9,7 @@ export function DestinationForm() {
   return (
     <form action={submit} className="card grid gap-3 p-4 sm:grid-cols-[1fr_2fr_auto]">
       <input name="name" required className="input-base" placeholder="HubSpot inbound" />
-      <input name="url" required type="url" className="input-base" placeholder="https://api.yourcrm.com/hooks/mailhook" />
+      <input name="url" required type="url" className="input-base" placeholder="https://api.yourcrm.com/hooks/skillmail" />
       <button type="submit" disabled={pending} className="btn btn-primary">
         {pending ? 'Saving…' : 'Add destination'}
       </button>

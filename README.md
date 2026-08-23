@@ -1,8 +1,8 @@
-# MailHook
+# SkillMail
 
 Turn inbound email into structured CRM records.
 
-Connect a mailbox, describe the record you want in plain English, and MailHook reads each
+Connect a mailbox, describe the record you want in plain English, and SkillMail reads each
 message with Claude, extracts the record, and POSTs it to your CRM as a signed webhook.
 
 **Live demo:** _not deployed yet_ — see [Deploying](#deploying).
@@ -27,7 +27,7 @@ Gmail (read-only)  →  message store  →  Claude tool-call extraction  →  si
      backfills a configurable window (default 30 days, paginated); every later sync replays
      Gmail's History API from a stored cursor — incremental, cheap, and exactly-once. A cursor
      that ages out of Gmail's ~7-day history window falls back to a bounded search automatically.
-   - **A live inbound address** minted per user (`abc123@inbound.mailhook.dev`). Point any relay
+   - **A live inbound address** minted per user (`abc123@inbound.skillmail.dev`). Point any relay
      — Postmark, Mailgun, SendGrid inbound parse, a Cloudflare Email Worker — at
      `/api/inbound/{token}` and real mail anyone sends is parsed (native relay JSON, form posts,
      or raw RFC 822), stored, and run through every active skill immediately. No polling.
@@ -36,7 +36,7 @@ Gmail (read-only)  →  message store  →  Claude tool-call extraction  →  si
    list is compiled into the tool schema Claude must fill *and* the JSON contract your endpoint
    receives — they cannot drift apart.
 3. **Point it at a destination.** Every successful extraction is POSTed with an
-   `x-mailhook-signature` header. Non-2xx retries on exponential backoff across six attempts.
+   `x-skillmail-signature` header. Non-2xx retries on exponential backoff across six attempts.
 
 ## Design decisions worth calling out
 

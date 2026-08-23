@@ -45,7 +45,7 @@ export async function addDemoMailbox() {
   const user = await requireUser()
   await db
     .insert(mailboxes)
-    .values({ userId: user.id, provider: 'demo', address: 'demo-inbox@mailhook.dev' })
+    .values({ userId: user.id, provider: 'demo', address: 'demo-inbox@skillmail.dev' })
     .onConflictDoNothing()
   revalidatePath('/dashboard/mailboxes')
 }

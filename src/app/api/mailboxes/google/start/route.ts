@@ -16,7 +16,7 @@ export async function GET() {
   // CSRF: the callback only proceeds if state round-trips this cookie.
   const state = randomBytes(16).toString('base64url')
   const jar = await cookies()
-  jar.set('mh_oauth_state', state, { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 600 })
+  jar.set('sm_oauth_state', state, { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 600 })
 
   return NextResponse.redirect(authorizeUrl(state))
 }

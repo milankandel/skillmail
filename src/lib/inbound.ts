@@ -7,7 +7,7 @@ export function newInboundToken(): string {
 }
 
 export function inboundAddress(token: string): string {
-  return `${token}@${process.env.INBOUND_DOMAIN ?? 'inbound.mailhook.dev'}`
+  return `${token}@${process.env.INBOUND_DOMAIN ?? 'inbound.skillmail.dev'}`
 }
 
 function splitAddress(raw: string): { address: string; name: string | null } {

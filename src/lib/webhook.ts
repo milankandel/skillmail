@@ -91,9 +91,9 @@ export async function deliver(input: {
       headers: {
         ...input.headers,
         'content-type': 'application/json',
-        'user-agent': 'MailHook/1.0',
-        'x-mailhook-signature': `t=${timestamp},v1=${sign(input.secret, timestamp, body)}`,
-        'x-mailhook-idempotency-key': input.idempotencyKey,
+        'user-agent': 'SkillMail/1.0',
+        'x-skillmail-signature': `t=${timestamp},v1=${sign(input.secret, timestamp, body)}`,
+        'x-skillmail-idempotency-key': input.idempotencyKey,
       },
       body,
     })

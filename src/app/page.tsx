@@ -3,8 +3,8 @@ import { ArrowRight, KeyRound, Mail, RefreshCcw, ShieldCheck, Webhook } from 'lu
 import { currentUser } from '@/lib/session'
 
 const SAMPLE = `POST /crm/leads
-x-mailhook-signature: t=1756900412,v1=8f2c…
-x-mailhook-idempotency-key: 4b1f…
+x-skillmail-signature: t=1756900412,v1=8f2c…
+x-skillmail-idempotency-key: 4b1f…
 
 {
   "type": "record.extracted",
@@ -33,7 +33,7 @@ const STEPS = [
   {
     icon: Mail,
     title: 'Connect a mailbox',
-    body: 'Read-only Gmail OAuth. MailHook never gains send, modify, or delete access, and refresh tokens are sealed with AES-256-GCM before they touch the database.',
+    body: 'Read-only Gmail OAuth. SkillMail never gains send, modify, or delete access, and refresh tokens are sealed with AES-256-GCM before they touch the database.',
   },
   {
     icon: KeyRound,
@@ -61,7 +61,7 @@ export default async function Home() {
       <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
         <span className="flex items-center gap-2 font-semibold text-white">
           <Webhook className="size-5 text-brand" />
-          MailHook
+          SkillMail
         </span>
         <nav className="flex items-center gap-3 text-sm">
           {user ? (
@@ -93,7 +93,7 @@ export default async function Home() {
               <span className="block text-brand">Nobody is typing them in.</span>
             </h1>
             <p className="mt-5 max-w-xl text-[15px] leading-relaxed text-gray-400">
-              MailHook watches a mailbox, reads each message the way a coordinator would, and turns the ones that matter into
+              SkillMail watches a mailbox, reads each message the way a coordinator would, and turns the ones that matter into
               structured records — then delivers them to your CRM as a signed webhook. Quote requests, past-due notices,
               shipment bookings, support escalations: you describe the shape once.
             </p>
@@ -149,7 +149,7 @@ export default async function Home() {
 
       <footer className="border-t border-edge">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-6 py-6 text-xs text-gray-600">
-          <span>MailHook — built by Milan Kandel</span>
+          <span>SkillMail — built by Milan Kandel</span>
           <a href="https://github.com/milankandel" className="hover:text-brand" target="_blank" rel="noreferrer">
             github.com/milankandel
           </a>

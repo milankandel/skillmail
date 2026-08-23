@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useActionState } from 'react'
 import type { FormState } from '@/actions/auth'
+import { GoogleSignIn } from './GoogleSignIn'
 
 type Props = {
   mode: 'login' | 'signup'
@@ -54,6 +55,12 @@ export function AuthForm({ mode, action }: Props) {
       <button type="submit" disabled={pending} className="btn btn-primary w-full">
         {pending ? 'Working…' : isSignup ? 'Create workspace' : 'Sign in'}
       </button>
+
+      <div className="flex items-center gap-3 text-[11px] text-gray-600">
+        <span className="h-px flex-1 bg-edge" /> or <span className="h-px flex-1 bg-edge" />
+      </div>
+
+      <GoogleSignIn />
 
       <p className="text-center text-sm text-gray-500">
         {isSignup ? 'Already have an account? ' : 'Need an account? '}

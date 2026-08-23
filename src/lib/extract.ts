@@ -18,12 +18,13 @@ type JsonProp = { type: string; description: string; items?: { type: string } }
 function toolSchema(fields: SkillField[], wantsReply: boolean) {
   const properties: Record<string, JsonProp> = {}
   for (const f of fields) {
+    const requiredNote = f.required ? ' This field is required whenever the record is present.' : ''
     properties[f.key] =
       f.type === 'string[]'
-        ? { type: 'array', description: f.description, items: { type: 'string' } }
+        ? { type: 'array', description: f.description + requiredNote, items: { type: 'string' } }
         : f.type === 'date'
-          ? { type: 'string', description: `${f.description} Format as YYYY-MM-DD.` }
-          : { type: f.type, description: f.description }
+          ? { type: 'string', description: `${f.description} Format as YYYY-MM-DD.${requiredNote}` }
+          : { type: f.type, description: f.description + requiredNote }
   }
 
   return {
@@ -47,7 +48,10 @@ function toolSchema(fields: SkillField[], wantsReply: boolean) {
           }
         : {}),
     },
-    required: ['present', 'confidence', 'reasoning', ...fields.filter((f) => f.required).map((f) => f.key)],
+    // Only the judgement fields are schema-required. Making record fields
+    // required breaks the present:false path on strict providers — the model
+    // is asked to fill fields for a record it just said is not there.
+    required: ['present', 'confidence', 'reasoning'],
   }
 }
 

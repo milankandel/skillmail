@@ -58,7 +58,7 @@ Tailwind v4 · bcrypt + `jose` sessions
 
 **LLM-agnostic:** extraction and skill authoring run through one structured-output adapter
 ([`src/lib/llm.ts`](src/lib/llm.ts)). Set any one of `ANTHROPIC_API_KEY` (Claude),
-`GROQ_API_KEY` (Llama 3.3 70B, free tier), `GEMINI_API_KEY` (Gemini 2.5 Flash, free tier), or
+`GROQ_API_KEY` (gpt-oss-120b, free tier), `GEMINI_API_KEY` (Gemini 2.5 Flash, free tier), or
 `OPENROUTER_API_KEY` (free models) — the same code serves them all. A per-account daily
 extraction cap (`EXTRACTION_DAILY_CAP`, default 100/24h) keeps an open demo from draining the key.
 

@@ -22,7 +22,7 @@ type Provider = {
 }
 
 const OPENAI_COMPATIBLE: Provider[] = [
-  { name: 'groq', baseUrl: 'https://api.groq.com/openai/v1', keyEnv: 'GROQ_API_KEY', defaultModel: 'llama-3.3-70b-versatile' },
+  { name: 'groq', baseUrl: 'https://api.groq.com/openai/v1', keyEnv: 'GROQ_API_KEY', defaultModel: 'openai/gpt-oss-120b' },
   {
     name: 'gemini',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
@@ -103,8 +103,31 @@ async function callOpenAiCompatible(
   })
 
   if (!res.ok) {
-    const detail = (await res.text()).slice(0, 300)
-    throw new Error(`${provider.name} request failed (${res.status}): ${detail}`)
+    const detail = (await res.text()).slice(0, 600)
+
+    // Groq enforces tool choice strictly: when the model emits its JSON as
+    // text instead of a tool call, the API 400s but includes the generation.
+    // The JSON is usually valid — recover it rather than failing the message.
+    if (res.status === 400 && detail.includes('tool_use_failed')) {
+      try {
+        const parsed = JSON.parse(detail) as { error?: { failed_generation?: string } }
+        const recovered = parsed.error?.failed_generation
+        if (recovered) {
+          return { output: JSON.parse(recovered) as Record<string, unknown>, model: `${provider.name}/${model}`, inputTokens: 0, outputTokens: 0 }
+        }
+      } catch {
+        // fall through to the normal error
+      }
+    }
+
+    const err = new Error(`${provider.name} request failed (${res.status}): ${detail.slice(0, 300)}`) as Error & {
+      status?: number
+      retryAfterMs?: number
+    }
+    err.status = res.status
+    const wait = detail.match(/try again in ([\d.]+)(m?s)/i)
+    if (wait) err.retryAfterMs = Math.ceil(parseFloat(wait[1]) * (wait[2].toLowerCase() === 'ms' ? 1 : 1000))
+    throw err
   }
 
   const json = (await res.json()) as {
@@ -144,5 +167,21 @@ export async function completeStructured(input: {
   if (active === 'anthropic') return callAnthropic(input)
 
   const provider = OPENAI_COMPATIBLE.find((p) => p.name === active)!
-  return callOpenAiCompatible(provider, input)
+
+  // Free tiers rate-limit by tokens-per-minute; a burst of messages in one
+  // sync trips it constantly. Honour the server's suggested wait, capped so a
+  // sync cannot hang, and give up after a few rounds.
+  let lastError: unknown
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      return await callOpenAiCompatible(provider, input)
+    } catch (e) {
+      const err = e as Error & { status?: number; retryAfterMs?: number }
+      if (err.status !== 429) throw e
+      lastError = e
+      const wait = Math.min(err.retryAfterMs ?? 2000 * (attempt + 1), 15_000)
+      await new Promise((r) => setTimeout(r, wait + 250))
+    }
+  }
+  throw lastError
 }

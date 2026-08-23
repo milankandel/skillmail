@@ -1,36 +1,85 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# MailHook
 
-## Getting Started
+Turn inbound email into structured CRM records.
 
-First, run the development server:
+Connect a mailbox, describe the record you want in plain English, and MailHook reads each
+message with Claude, extracts the record, and POSTs it to your CRM as a signed webhook.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+**Live demo:** _not deployed yet_ — see [Deploying](#deploying).
+
+## Why it exists
+
+Quote requests, past-due notices, booking requests and support escalations arrive as prose.
+Somebody re-types them into a CRM. This does that step, and refuses to guess when the email
+isn't the record it was asked for.
+
+## How it works
+
+```
+Gmail (read-only)  →  message store  →  Claude tool-call extraction  →  signed webhook  →  your CRM
+                                              │                              │
+                                       present / confidence          HMAC-SHA256 + retry
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+1. **Connect a mailbox.** Gmail OAuth, `gmail.readonly` scope only. Refresh tokens are sealed
+   with AES-256-GCM before they reach Postgres, so a database dump is inert without `APP_SECRET`.
+2. **Define an extractor.** A name, a plain-English instruction, and a field list. That field
+   list is compiled into the tool schema Claude must fill *and* the JSON contract your endpoint
+   receives — they cannot drift apart.
+3. **Point it at a destination.** Every successful extraction is POSTed with an
+   `x-mailhook-signature` header. Non-2xx retries on exponential backoff across six attempts.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Design decisions worth calling out
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Decision | Reason |
+|---|---|
+| Model reports `present` and `confidence` | A newsletter comes back `skipped`, not invented. A wrong CRM record costs more than a missing one. |
+| Idempotent on natural keys | Messages key on `(mailbox, providerId)`, extractions on `(message, extractor)`, deliveries carry an idempotency key. Re-running a sync duplicates nothing. |
+| SSRF guard on destinations | Operator-supplied URLs are DNS-resolved and rejected if they land on loopback, RFC1918, link-local, or unique-local addresses — otherwise the app would happily POST a payload to `169.254.169.254`. |
+| Signature covers timestamp + body | Five-minute replay window, `timingSafeEqual` comparison. Verification is ten lines on the receiver. |
+| Raw `fetch` instead of `googleapis` | Four endpoints are used; the SDK adds megabytes of discovery documents to a serverless bundle. |
+| Demo mailbox on signup | The whole pipeline is observable before anyone grants access to a real inbox. |
 
-## Learn More
+## Stack
 
-To learn more about Next.js, take a look at the following resources:
+Next.js 16 (App Router, server actions) · TypeScript · Postgres via Drizzle + Neon serverless ·
+Anthropic SDK · Tailwind v4 · bcrypt + `jose` sessions
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Local setup
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+cp .env.example .env.local   # fill DATABASE_URL, APP_SECRET, ANTHROPIC_API_KEY
+npm install
+npx drizzle-kit migrate
+npm run dev
+```
 
-## Deploy on Vercel
+Gmail is optional locally — a new account is seeded with a demo inbox, one worked extractor,
+and a paused destination, which is enough to exercise extraction end to end.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+To connect real Gmail, create a Google Cloud OAuth client (Web application) and register
+`${APP_URL}/api/mailboxes/google/callback` as an authorized redirect URI.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Deploying
+
+Vercel. Set every variable from `.env.example` in the project, run `npx drizzle-kit migrate`
+against the production database once, and set `CRON_SECRET` so the retry drain at
+`/api/cron/retries` (wired in `vercel.json`, every 10 minutes) can authenticate.
+
+## Verifying a webhook
+
+```js
+import { createHmac, timingSafeEqual } from 'node:crypto'
+
+export function verify(header, rawBody, secret) {
+  const { t, v1 } = Object.fromEntries(header.split(',').map((p) => p.split('=')))
+  if (Math.abs(Date.now() / 1000 - Number(t)) > 300) return false
+  const expected = createHmac('sha256', secret).update(`${t}.${rawBody}`).digest('hex')
+  return timingSafeEqual(Buffer.from(expected), Buffer.from(v1))
+}
+```
+
+## Status
+
+Working: auth, Gmail OAuth, sync, extraction, signed delivery, retry/backoff, replay, demo inbox.
+Not built: attachment parsing, per-destination extractor routing, team accounts, usage metering.

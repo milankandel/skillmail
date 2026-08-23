@@ -8,6 +8,12 @@ import * as gmail from './gmail'
 import type { ParsedMessage } from './gmail'
 import { MAX_ATTEMPTS, deliver, nextAttemptAt } from './webhook'
 
+/**
+ * Hard per-sync message ceiling. This deployment is a public demo on a
+ * free-tier LLM key — nobody's full inbox should ever flow through it.
+ */
+const SYNC_MAX = Number(process.env.SYNC_MAX_MESSAGES ?? 50)
+
 export type SyncSummary = {
   fetched: number
   stored: number
@@ -62,7 +68,7 @@ async function fetchNew(
     const history = await gmail.listHistorySince(accessToken, mailbox.historyId)
     if (history.expired) {
       // Cursor aged out of Gmail's ~7-day history window; fall back to search.
-      const search = await gmail.listMessageIds(accessToken, { query: `${mailbox.syncQuery} newer_than:7d`, max: 250 })
+      const search = await gmail.listMessageIds(accessToken, { query: `${mailbox.syncQuery} newer_than:7d`, max: SYNC_MAX })
       candidateIds = search.ids
       truncated = search.truncated
       cursor = await gmail.currentHistoryId(accessToken)
@@ -73,7 +79,7 @@ async function fetchNew(
   } else {
     const search = await gmail.listMessageIds(accessToken, {
       query: `${mailbox.syncQuery} newer_than:${mailbox.backfillDays}d`,
-      max: 500,
+      max: SYNC_MAX,
     })
     candidateIds = search.ids
     truncated = search.truncated

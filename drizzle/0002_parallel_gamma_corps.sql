@@ -1,0 +1,1 @@
+ALTER TABLE "mailboxes" ALTER COLUMN "backfill_days" SET DEFAULT 7;

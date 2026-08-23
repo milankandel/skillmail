@@ -33,7 +33,7 @@ export const mailboxes = pgTable('mailboxes', {
   /** Gmail search expression bounding what this mailbox pulls. */
   syncQuery: text('sync_query').default('in:inbox').notNull(),
   /** How far back the first sync reaches. Later syncs are incremental. */
-  backfillDays: integer('backfill_days').default(30).notNull(),
+  backfillDays: integer('backfill_days').default(7).notNull(),
   /** Routing token for provider-relayed mail. Unique per inbound mailbox. */
   inboundToken: text('inbound_token'),
   lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),

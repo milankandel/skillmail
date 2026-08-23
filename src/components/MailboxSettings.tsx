@@ -34,7 +34,7 @@ export function MailboxSettings({ mailboxId, syncQuery, backfillDays, autoSync }
           </label>
           <label className="block">
             <span className="mb-1 block text-[11px] text-gray-500">First-sync window (days)</span>
-            <input name="backfillDays" type="number" min={1} max={365} defaultValue={backfillDays} className="input-base" />
+            <input name="backfillDays" type="number" min={1} max={30} defaultValue={backfillDays} className="input-base" />
           </label>
           <label className="flex items-end gap-2 pb-2 text-xs text-gray-400">
             <input type="checkbox" name="autoSync" defaultChecked={autoSync} />
@@ -46,7 +46,7 @@ export function MailboxSettings({ mailboxId, syncQuery, backfillDays, autoSync }
             </button>
           </div>
           <p className="text-[11px] text-gray-600 sm:col-span-4">
-            Changing the query or window restarts incremental sync from a fresh search. Auto-sync runs every 10 minutes.
+            Changing the query or window restarts incremental sync from a fresh search. Each sync ingests at most 50 messages; the window caps at 30 days on this deployment.
           </p>
         </form>
       )}

@@ -15,6 +15,13 @@
       "when": 1787465066814,
       "tag": "0001_loving_skreet",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1787476978847,
+      "tag": "0002_parallel_gamma_corps",
+      "breakpoints": true
     }
   ]
 }

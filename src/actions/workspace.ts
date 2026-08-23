@@ -65,7 +65,7 @@ export async function addInboundMailbox() {
 export async function updateMailboxSettings(formData: FormData) {
   const user = await requireUser()
   const id = String(formData.get('mailboxId'))
-  const backfill = Math.min(365, Math.max(1, Number(formData.get('backfillDays')) || 30))
+  const backfill = Math.min(30, Math.max(1, Number(formData.get('backfillDays')) || 7))
   const query = String(formData.get('syncQuery') ?? 'in:inbox').trim() || 'in:inbox'
   await db
     .update(mailboxes)

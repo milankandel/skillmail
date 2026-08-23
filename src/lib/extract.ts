@@ -1,7 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk'
 import type { SkillField } from '@/db/schema'
-
-const MODEL = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-5'
+import { completeStructured } from './llm'
 
 export type ExtractionResult = {
   status: 'ok' | 'skipped'
@@ -71,41 +69,27 @@ export async function extract(input: {
   draftReply: boolean
   replyInstruction?: string | null
   message: { fromAddress: string; fromName: string | null; subject: string; body: string; receivedAt: Date }
-  apiKey?: string
 }): Promise<ExtractionResult> {
-  const apiKey = input.apiKey ?? process.env.ANTHROPIC_API_KEY
-  if (!apiKey) throw new Error('No Anthropic API key configured')
+  const description =
+    input.draftReply && input.replyInstruction
+      ? `${input.instruction}\n\nWhen drafting the reply: ${input.replyInstruction}`
+      : input.instruction
 
-  const client = new Anthropic({ apiKey })
-
-  const description = input.draftReply && input.replyInstruction
-    ? `${input.instruction}\n\nWhen drafting the reply: ${input.replyInstruction}`
-    : input.instruction
-
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 2000,
+  const result = await completeStructured({
     system: systemPrompt(input.persona),
-    tools: [{ name: 'record', description, input_schema: toolSchema(input.fields, input.draftReply) }],
-    tool_choice: { type: 'tool', name: 'record' },
-    messages: [
-      {
-        role: 'user',
-        content: [
-          `From: ${input.message.fromName ? `${input.message.fromName} <${input.message.fromAddress}>` : input.message.fromAddress}`,
-          `Subject: ${input.message.subject}`,
-          `Received: ${input.message.receivedAt.toISOString()}`,
-          '',
-          input.message.body.slice(0, 16_000),
-        ].join('\n'),
-      },
-    ],
+    user: [
+      `From: ${input.message.fromName ? `${input.message.fromName} <${input.message.fromAddress}>` : input.message.fromAddress}`,
+      `Subject: ${input.message.subject}`,
+      `Received: ${input.message.receivedAt.toISOString()}`,
+      '',
+      input.message.body.slice(0, 16_000),
+    ].join('\n'),
+    toolName: 'record',
+    toolDescription: description,
+    schema: toolSchema(input.fields, input.draftReply),
   })
 
-  const block = response.content.find((c) => c.type === 'tool_use')
-  if (!block || block.type !== 'tool_use') throw new Error('model returned no structured record')
-
-  const { present, confidence, reasoning, replyDraft, ...data } = block.input as {
+  const { present, confidence, reasoning, replyDraft, ...data } = result.output as {
     present: boolean
     confidence: 'high' | 'medium' | 'low'
     reasoning: string
@@ -118,8 +102,8 @@ export async function extract(input: {
     confidence: confidence ?? 'low',
     reasoning: reasoning ?? '',
     replyDraft: present && replyDraft ? replyDraft : null,
-    model: MODEL,
-    inputTokens: response.usage.input_tokens,
-    outputTokens: response.usage.output_tokens,
+    model: result.model,
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
   }
 }

@@ -4,6 +4,7 @@ import { db } from '@/db'
 import { mailboxes } from '@/db/schema'
 import { requireUser } from '@/lib/session'
 import { isGmailConfigured } from '@/lib/gmail'
+import { activeProvider } from '@/lib/llm'
 import { addDemoMailbox, addInboundMailbox, disconnectMailbox } from '@/actions/workspace'
 import { SyncButton } from '@/components/SyncButton'
 import { CopyAddress, MailboxSettings } from '@/components/MailboxSettings'
@@ -19,6 +20,7 @@ export default async function MailboxesPage({ searchParams }: { searchParams: Pr
   const params = await searchParams
   const boxes = await db.select().from(mailboxes).where(eq(mailboxes.userId, user.id)).orderBy(desc(mailboxes.createdAt))
   const gmailReady = isGmailConfigured()
+  const provider = activeProvider()
   const appUrl = process.env.APP_URL ?? 'http://localhost:3000'
 
   return (
@@ -34,6 +36,13 @@ export default async function MailboxesPage({ searchParams }: { searchParams: Pr
       {params.error && (
         <p className="rounded-md border border-rose-900/60 bg-rose-950/40 px-3 py-2 text-sm text-rose-300">{params.error}</p>
       )}
+      {!provider && (
+        <p className="rounded-md border border-amber-900/60 bg-amber-950/30 px-3 py-2 text-sm text-amber-300">
+          No LLM key is configured on this deployment — messages will store but extraction will fail until one of
+          ANTHROPIC_API_KEY, GROQ_API_KEY, GEMINI_API_KEY, or OPENROUTER_API_KEY is set.
+        </p>
+      )}
+
       {params.connected && (
         <p className="rounded-md border border-teal-900/60 bg-teal-950/30 px-3 py-2 text-sm text-brand">
           Connected {params.connected}. Run a sync to pull your backfill window.

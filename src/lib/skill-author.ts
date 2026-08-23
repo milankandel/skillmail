@@ -1,7 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk'
 import type { SkillField } from '@/db/schema'
-
-const MODEL = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-5'
+import { completeStructured } from './llm'
 
 export type DraftedSkill = {
   name: string
@@ -63,30 +61,23 @@ const SPEC = {
  * where most of the accuracy is won or lost, so this drafts rather than
  * decides — everything it returns lands in an editable form.
  */
-export async function draftSkill(prompt: string, apiKey?: string): Promise<DraftedSkill> {
-  const key = apiKey ?? process.env.ANTHROPIC_API_KEY
-  if (!key) throw new Error('No Anthropic API key configured')
-
-  const response = await new Anthropic({ apiKey: key }).messages.create({
-    model: MODEL,
-    max_tokens: 2000,
+export async function draftSkill(prompt: string): Promise<DraftedSkill> {
+  const result = await completeStructured({
     system:
       'You design email extraction skills. The operator describes, in their own words, a job they want done ' +
       'against their inbox. You return a complete specification: the persona the model should adopt, what record ' +
       'to look for, and the exact fields to pull out.\n\n' +
       'Two things make a skill work. First, the instruction must say what does NOT count — the near-miss emails ' +
       'that would otherwise produce junk records. Second, every field description must be written for the model ' +
-      'that fills it, not for a human reading a form. Infer the operator\'s industry from their wording and use ' +
+      "that fills it, not for a human reading a form. Infer the operator's industry from their wording and use " +
       'its real vocabulary in the field descriptions.',
-    tools: [{ name: 'skill', description: 'The drafted skill specification.', input_schema: SPEC }],
-    tool_choice: { type: 'tool', name: 'skill' },
-    messages: [{ role: 'user', content: prompt }],
+    user: prompt,
+    toolName: 'skill',
+    toolDescription: 'The drafted skill specification.',
+    schema: SPEC,
   })
 
-  const block = response.content.find((c) => c.type === 'tool_use')
-  if (!block || block.type !== 'tool_use') throw new Error('model returned no skill specification')
-
-  const raw = block.input as Omit<DraftedSkill, 'matchFrom' | 'matchSubject' | 'replyInstruction'> & {
+  const raw = result.output as Omit<DraftedSkill, 'matchFrom' | 'matchSubject' | 'replyInstruction'> & {
     matchFrom?: string
     matchSubject?: string
     replyInstruction?: string

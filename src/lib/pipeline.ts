@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull, lte } from 'drizzle-orm'
+import { and, asc, count, eq, gte, inArray, isNotNull, lte } from 'drizzle-orm'
 import { db } from '@/db'
 import { deliveries, destinations, extractions, mailboxes, messages, skills } from '@/db/schema'
 import { open, seal } from './crypto'
@@ -206,11 +206,34 @@ export async function runSkills(
   ])
   if (!rules.length) return summary
 
+  // Public-demo guard: each account gets a bounded number of LLM calls per
+  // day, so an open signup page cannot drain the deployment's key.
+  const cap = Number(process.env.EXTRACTION_DAILY_CAP ?? 100)
+  const since = new Date(Date.now() - 86_400_000)
+  const [{ used }] = await db
+    .select({ used: count() })
+    .from(extractions)
+    .where(and(eq(extractions.userId, userId), gte(extractions.createdAt, since)))
+  let budget = Math.max(0, cap - used)
+
   for (const message of batch) {
     for (const rule of rules) {
       if (!matches(rule, message)) continue
 
       let row: typeof extractions.$inferInsert
+      if (budget <= 0) {
+        row = {
+          userId,
+          messageId: message.id,
+          skillId: rule.id,
+          status: 'failed',
+          error: `daily extraction cap reached (${cap}/day) — try again tomorrow`,
+        }
+        const [capped] = await db.insert(extractions).values(row).onConflictDoNothing().returning()
+        if (capped) summary.failed++
+        continue
+      }
+      budget--
       try {
         const result = await extract({
           persona: rule.persona,
